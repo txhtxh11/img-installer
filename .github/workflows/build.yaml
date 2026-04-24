@@ -31,86 +31,30 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
-      - name: Inject 32-bit EFI boot files for Atom Z3745
+      - name: Inject 32-bit EFI boot files
         run: |
           sudo apt update && sudo apt install -y xorriso wget
           ISO_FILE=$(ls output/*.iso | head -1)
-          echo "Found ISO: $ISO_FILE"
-          
           mkdir -p /tmp/efi_files
-          cd /tmp/efi_files
-          
-          echo "Downloading EFI files from personal repo..."
-          wget -q https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
-          wget -q https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
-          
-          echo "Injecting EFI files into ISO..."
-          xorriso -as mkisofs \
-              -V "Armbian_Installer" \
-              -J -joliet-long -r \
-              -o "$ISO_FILE" \
-              -M "$ISO_FILE" \
-              -graft-points \
-              /EFI/BOOT/bootia32.efi=/tmp/efi_files/bootia32.efi \
-              /EFI/BOOT/grubia32.efi=/tmp/efi_files/grubia32.efi \
-              2>/dev/null
-          
-          echo "Verifying injection:"
-          xorriso -indev "$ISO_FILE" -ls /EFI/BOOT 2>/dev/null
-          echo "✅ 32-bit EFI injection completed."
+          wget -q -O /tmp/efi_files/bootia32.efi https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
+          wget -q -O /tmp/efi_files/grubia32.efi https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
+          xorriso -as mkisofs -V "Armbian_Installer" -J -joliet-long -r -o "$ISO_FILE" -M "$ISO_FILE" -graft-points /EFI/BOOT/bootia32.efi=/tmp/efi_files/bootia32.efi /EFI/BOOT/grubia32.efi=/tmp/efi_files/grubia32.efi 2>/dev/null
+          echo "✅ 32-bit EFI injected"
 
       - name: Prepare Release Assets
         run: |
           case "$VERSION_TYPE" in
-            "debian12_minimal")
-              FINAL_NAME="armbian-installer-x86_64-debian12_minimal-z3745.iso"
-              ;;
-            "ubuntu24_minimal")
-              FINAL_NAME="armbian-installer-x86_64-ubuntu24_minimal-z3745.iso"
-              ;;
-            "homeassistant_debian12_minimal")
-              FINAL_NAME="armbian-installer-x86_64-homeassistant_debian12_minimal-z3745.iso"
-              ;;
-            *)
-              FINAL_NAME="armbian-installer-x86_64-standard-z3745.iso"
-              ;;
+            "debian12_minimal") FINAL_NAME="armbian-installer-x86_64-debian12_minimal-z3745.iso" ;;
+            "ubuntu24_minimal") FINAL_NAME="armbian-installer-x86_64-ubuntu24_minimal-z3745.iso" ;;
+            "homeassistant_debian12_minimal") FINAL_NAME="armbian-installer-x86_64-homeassistant_debian12_minimal-z3745.iso" ;;
+            *) FINAL_NAME="armbian-installer-x86_64-standard-z3745.iso" ;;
           esac
           mv output/*.iso "output/${FINAL_NAME}"
-
-      - name: Generate Release Notes
-        run: |
-          cat > info.md << 'EOF'
-      # Armbian Installer for Atom Z3745 (32-bit UEFI)
-      
-      ## 适用硬件
-      - Intel Atom Z3735 / Z3745 / Z3736 系列
-      - 64位 CPU + 32位 UEFI 的平板/迷你主机（如台电、昂达、酷比魔方、联想 Miix 等）
-      
-      ## 特性
-      - ✅ 已注入 **32位 UEFI** 引导文件（bootia32.efi + grubia32.efi）
-      - ✅ 支持直接从 U 盘启动，无需修改 BIOS
-      - ✅ 可选 Debian 12 / Ubuntu 24.04 / Home Assistant 环境
-      
-      ## 安装方法
-      1. 使用 [Rufus](https://rufus.ie/) 或 [Etcher](https://www.balena.io/etcher/) 写入 U 盘
-      2. 从 U 盘启动（可能需要关闭 Secure Boot）
-      3. 运行 `ddd` 一键安装到 eMMC / SSD
-      
-      ## 版本说明
-      - **standard**: 标准 Armbian 系统
-      - **debian12_minimal**: 精简 Debian 12
-      - **ubuntu24_minimal**: 精简 Ubuntu 24.04
-      - **homeassistant_debian12_minimal**: 预装 Home Assistant 的 Debian 12
-      
-      ---
-      构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-      EOF
 
       - name: Publish Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
-          body_path: info.md
           files: output/*.iso
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
