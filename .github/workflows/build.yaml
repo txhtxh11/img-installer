@@ -14,56 +14,52 @@ on:
           - "ubuntu24_minimal"
           - "homeassistant_debian12_minimal"
 
+# --- 关键修改 1：添加权限声明 ---
+permissions:
+  contents: write    # 允许创建 Release 并上传文件
+  packages: write
+
 jobs:
   build-release:
     runs-on: ubuntu-22.04
     env:
       VERSION_TYPE: ${{ github.event.inputs.version_type }}
+      # --- 关键修改 2：适配 Node.js 24 ---
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v4
 
-      # --- 新增步骤：获取 32位 EFI 引导文件 ---
       - name: Fetch 32-bit EFI files
         run: |
           mkdir -p efi_tmp
-          # 使用 sparse-checkout 仅下载需要的文件，节省带宽
           git clone --depth 1 --filter=blob:none --sparse https://github.com/txhtxh11/my-efi-files.git efi_tmp
           cd efi_tmp
           git sparse-checkout set EFI/BOOT
           cd ..
           
-          # 假设你的构建脚本需要这些文件放在 output/EFI/BOOT 或 根目录下的 EFI/BOOT
-          # 请根据你的 build.sh 实际逻辑修改目标路径
-          # 这里演示创建一个通用的 efi_assets 目录供脚本调用，或者直接放入源码对应位置
-          mkdir -p boot_files
-          cp efi_tmp/EFI/BOOT/bootia32.efi boot_files/
-          cp efi_tmp/EFI/BOOT/grubia32.efi boot_files/
-          
-          # 如果 build.sh 默认扫描当前目录的 EFI/BOOT，请取消下面这行的注释：
-          # mkdir -p EFI/BOOT && cp boot_files/* EFI/BOOT/
-      # ---------------------------------------
+          # 确保 build.sh 能在指定位置找到这些文件
+          mkdir -p EFI/BOOT
+          cp efi_tmp/EFI/BOOT/bootia32.efi EFI/BOOT/
+          cp efi_tmp/EFI/BOOT/grubia32.efi EFI/BOOT/
 
       - name: Build Image
         run: ./build.sh
 
       - name: "Prepare Release Assets"
         run: |
-          # 根据版本类型重命名ISO文件
           if [ "$VERSION_TYPE" = "debian12_minimal" ]; then
             mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-debian12_minimal.iso
           fi
-
           if [ "$VERSION_TYPE" = "ubuntu24_minimal" ]; then
             mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-ubuntu24_minimal.iso
           fi
-
           if [ "$VERSION_TYPE" = "homeassistant_debian12_minimal" ]; then
             mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-homeassistant_debian12_minimal.iso
           fi
 
       - name: "Publish"
-        uses: softprops/action-gh-release@v2.2.1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: "Armbian-Installer-x86_64-ISO"
           body_path: ${{ github.workspace }}/info.md
