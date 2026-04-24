@@ -21,7 +21,7 @@ jobs:
       contents: write
     env:
       VERSION_TYPE: ${{ github.event.inputs.version_type }}
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 消除Node警告
 
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +29,9 @@ jobs:
       - name: Build Image
         run: ./build.sh
 
+      # ==============================================
+      # 为 Atom Z3745 添加 32位 UEFI 引导文件
+      # ==============================================
       - name: Inject 32-bit EFI boot files for Atom Z3745
         run: |
           sudo apt update && sudo apt install -y mtools
@@ -36,6 +39,7 @@ jobs:
           echo "处理 ISO: $ISO_FILE"
           mkdir -p /tmp/efi/boot
           
+          # 下载 32位 UEFI 引导文件
           echo "下载 bootia32.efi..."
           wget -q -O /tmp/efi/boot/bootia32.efi \
             https://github.com/tianocore/tianocore.github.io/raw/master/grub/bootia32.efi || \
@@ -48,6 +52,7 @@ jobs:
             https://github.com/tianocore/tianocore.github.io/raw/master/grub/grubia32.efi || \
           echo "grubia32.efi 下载失败，继续..."
           
+          # 注入到 ISO
           echo "注入 32位 EFI 文件..."
           mmd -i "$ISO_FILE@@1M" ::EFI/BOOT 2>/dev/null || true
           mcopy -i "$ISO_FILE@@1M" -o /tmp/efi/boot/* ::EFI/BOOT/
@@ -96,8 +101,11 @@ jobs:
           echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> info.md
           echo "版本类型: $VERSION_TYPE" >> info.md
 
+      # ==============================================
+      # 👇 关键修改：将 v4 改成 v3
+      # ==============================================
       - name: Publish Release
-        uses: softprops/action-gh-release@v4
+        uses: softprops/action-gh-release@v3  # 改成 v3
         with:
           tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
           body_path: info.md
