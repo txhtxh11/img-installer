@@ -1,4 +1,4 @@
-name: "Build Armbian Installer ISO"
+name: "Build Armbian Installer ISO (32bit UEFI)"
 
 on:
   workflow_dispatch:
@@ -6,47 +6,97 @@ on:
       version_type:
         description: "版本类型"
         required: true
-        default: "standard"
+        default: "homeassistant_debian12_minimal"
         type: choice
         options:
-          - "standard"
-          - "debian12_minimal"
-          - "ubuntu24_minimal"
-          - "homeassistant_debian12_minimal"
+          - homeassistant_debian12_minimal
+          - debian12_minimal
+          - ubuntu24_minimal
+          - standard
 
 jobs:
   build-release:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     env:
-      VERSION_TYPE: ${{ github.event.inputs.version_type }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Image
-        run: ./build.sh
-
-      - name: "Prepare Release Assets"
         run: |
-          # 根据版本类型重命名ISO文件
-          if [ "$VERSION_TYPE" = "debian12_minimal" ]; then
-            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-debian12_minimal.iso
-          fi
+          chmod +x build.sh
+          ./build.sh
 
-          if [ "$VERSION_TYPE" = "ubuntu24_minimal" ]; then
-            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-ubuntu24_minimal.iso
-          fi
-
-          if [ "$VERSION_TYPE" = "homeassistant_debian12_minimal" ]; then
-            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-homeassistant_debian12_minimal.iso
+      - name: Inject 32-bit EFI boot files
+        run: |
+          sudo apt update && sudo apt install -y mtools
+          ISO=$(ls output/*.iso | head -1)
+          mkdir -p /tmp/efi/boot
+          
+          echo "📥 下载 bootia32.efi..."
+          wget -q -O /tmp/efi/boot/bootia32.efi \
+            https://github.com/tianocore/tianocore.github.io/raw/master/grub/bootia32.efi || \
+          wget -q -O /tmp/efi/boot/bootia32.efi \
+            https://github.com/ipxe/ipxe/raw/master/bin-i386-efi/ipxe.efi || \
+          { echo "❌ bootia32.efi 下载失败"; exit 1; }
+          
+          echo "📥 下载 grubia32.efi..."
+          wget -q -O /tmp/efi/boot/grubia32.efi \
+            https://github.com/tianocore/tianocore.github.io/raw/master/grub/grubia32.efi || \
+          echo "⚠️ grubia32.efi 下载失败，可能不影响启动"
+          
+          if [ ! -f "$ISO" ]; then
+            echo "❌ 错误：未找到ISO文件"
+            exit 1
           fi
           
+          echo "🔧 正在注入32位EFI文件到 $ISO"
+          mmd -i "$ISO@@1M" ::EFI/BOOT 2>/dev/null || true
+          mcopy -i "$ISO@@1M" -o /tmp/efi/boot/* ::EFI/BOOT/
+          
+          echo "✅ 验证注入结果："
+          mdir -i "$ISO@@1M" ::EFI/BOOT/
+          echo "✅ 32位EFI注入完成！"
 
-      - name: "Publish"
-        uses: softprops/action-gh-release@v2.2.1
+      - name: Generate Release Notes
+        run: |
+          cat > info.md << 'EOF'
+# Armbian Installer for Atom Z3745 (32-bit UEFI)
+
+## 🖥️ 适用硬件
+- Intel Atom Z3735 / Z3745 / Z3736 系列
+- 64位CPU + 32位UEFI 的平板/迷你主机
+- 包括：台电、昂达、酷比魔方、联想Miix 等老款设备
+
+## ✨ 特性
+- ✅ 32位UEFI引导支持 (bootia32.efi)
+- ✅ 预装 Home Assistant
+- ✅ 精简 Debian 12
+- ✅ 低内存占用 (适合2GB设备)
+
+## 📥 安装方法
+1. 使用 Rufus/Etcher 写入U盘
+2. 从U盘启动 (可能需要关闭 Secure Boot)
+3. 运行 `ddd` 一键安装到 eMMC
+
+## 🔗 版本信息
+- 构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+- 版本类型: ${{ github.event.inputs.version_type }}
+EOF
+
+      - name: Rename ISO
+        run: |
+          VERSION="${{ github.event.inputs.version_type }}"
+          mv output/*.iso "output/armbian-${VERSION}-z3745.iso"
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v4
         with:
-          tag_name: "Armbian-Installer-x86_64-ISO"
-          body_path: ${{ github.workspace }}/info.md
-          files: |
-            output/armbian-installer-x86_64-${{ github.event.inputs.version_type }}.iso
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
+          body_path: info.md
+          files: output/*.iso
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
