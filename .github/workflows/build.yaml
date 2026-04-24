@@ -1,18 +1,18 @@
-name: "Build Armbian Installer ISO (32-bit UEFI for Atom Z3745)"
+name: Build Armbian Installer ISO (32-bit UEFI for Atom Z3745)
 
 on:
   workflow_dispatch:
     inputs:
       version_type:
-        description: "版本类型"
+        description: 版本类型
         required: true
-        default: "standard"
+        default: standard
         type: choice
         options:
-          - "standard"
-          - "debian12_minimal"
-          - "ubuntu24_minimal"
-          - "homeassistant_debian12_minimal"
+          - standard
+          - debian12_minimal
+          - ubuntu24_minimal
+          - homeassistant_debian12_minimal
 
 jobs:
   build-release:
@@ -26,120 +26,93 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ==============================================
-      # 1. 构建完整的 Armbian Live ISO
-      # ==============================================
       - name: Build full Armbian Live ISO
         run: |
-          sudo apt update && sudo apt install -y wget xz-utils squashfs-tools xorriso isolinux syslinux-common
-          
-          # 根据版本类型选择下载链接
+          sudo apt update
+          sudo apt install -y wget xz-utils squashfs-tools xorriso isolinux syslinux-common
+
           case "$VERSION_TYPE" in
-            "homeassistant_debian12_minimal")
+            homeassistant_debian12_minimal)
               IMG_URL="https://dl.armbian.com/uefi-x86/Trixie_current_server-homeassistant"
               ;;
-            "debian12_minimal")
+            debian12_minimal)
               IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current_minimal"
               ;;
-            "ubuntu24_minimal")
+            ubuntu24_minimal)
               IMG_URL="https://dl.armbian.com/uefi-x86/Noble_current_minimal"
               ;;
             *)
               IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current"
               ;;
           esac
-          
-          echo "Downloading Armbian image from: $IMG_URL"
+
           mkdir -p armbian work/staging/live work/staging/isolinux output
           wget -O armbian/armbian.img.xz "$IMG_URL"
           unxz -v armbian/armbian.img.xz
-          
-          # 挂载 Armbian 原始镜像
+
           sudo mkdir -p /mnt/armbian
           sudo mount -o loop,ro armbian/armbian.img /mnt/armbian
-          
-          # 复制内核和 initrd
+
           KERNEL=$(ls /mnt/armbian/boot/vmlinuz-* | head -1)
           INITRD=$(ls /mnt/armbian/boot/initrd.img-* | head -1)
           sudo cp "$KERNEL" work/staging/live/vmlinuz
           sudo cp "$INITRD" work/staging/live/initrd
-          
-          # 压缩整个根文件系统为 squashfs（这才是体积大的原因）
-          echo "Creating squashfs filesystem (this may take a few minutes)..."
+
           sudo mksquashfs /mnt/armbian work/staging/live/filesystem.squashfs -comp gzip -b 1M
-          
-          # 卸载镜像
+
           sudo umount /mnt/armbian
-          
-          # 准备 ISOLINUX 引导
+
           sudo cp /usr/lib/ISOLINUX/isolinux.bin work/staging/isolinux/
           sudo cp /usr/lib/syslinux/modules/bios/*.c32 work/staging/isolinux/ 2>/dev/null || true
-          
+
           cat > work/staging/isolinux/isolinux.cfg << 'EOF'
           DEFAULT live
           LABEL live
             KERNEL /live/vmlinuz
             APPEND initrd=/live/initrd boot=live quiet splash
           EOF
-          
-          # 生成原始 ISO（不含 32位 EFI）
-          echo "Generating ISO..."
+
           sudo xorriso -as mkisofs -V "Armbian_Live" -J -joliet-long -r \
             -o output/armbian-installer-x86_64-${VERSION_TYPE}.iso \
             -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
             -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot work/staging
-          
+
           sudo chmod 666 output/*.iso
           ls -lh output/
 
-      # ==============================================
-      # 2. 从你的仓库下载 32位 EFI 文件并注入到 ISO
-      # ==============================================
       - name: Inject 32-bit EFI boot files from personal repo
         run: |
           ISO_FILE=$(ls output/*.iso | head -1)
-          echo "Found ISO: $ISO_FILE"
-          
-          # 创建临时目录
           mkdir -p /tmp/efi_files
-          
-          # 从你的 GitHub 仓库下载 32位 EFI 文件
-          echo "Downloading bootia32.efi from your repo..."
+
           wget -q -O /tmp/efi_files/bootia32.efi \
             https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
-          
-          echo "Downloading grubia32.efi from your repo..."
+
           wget -q -O /tmp/efi_files/grubia32.efi \
             https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
-          
-          # 检查文件大小，避免空文件
+
           if [ ! -s /tmp/efi_files/bootia32.efi ]; then
-            echo "ERROR: bootia32.efi is empty or missing"
+            echo "ERROR: bootia32.efi download failed or empty"
             exit 1
           fi
-          
-          # 使用 xorriso 添加 EFI 文件到 ISO（不重建整个 ISO）
-          echo "Injecting EFI files into ISO..."
+
           xorriso -dev "$ISO_FILE" \
             -add /tmp/efi_files/bootia32.efi -- /EFI/BOOT/bootia32.efi \
             -add /tmp/efi_files/grubia32.efi -- /EFI/BOOT/grubia32.efi \
             -commit -eject all
-          
+
           echo "✅ 32-bit EFI injection completed."
 
-      # ==============================================
-      # 3. 重命名并发布 Release
-      # ==============================================
       - name: Prepare Release Assets
         run: |
           case "$VERSION_TYPE" in
-            "debian12_minimal")
+            debian12_minimal)
               FINAL_NAME="armbian-installer-x86_64-debian12_minimal-z3745.iso"
               ;;
-            "ubuntu24_minimal")
+            ubuntu24_minimal)
               FINAL_NAME="armbian-installer-x86_64-ubuntu24_minimal-z3745.iso"
               ;;
-            "homeassistant_debian12_minimal")
+            homeassistant_debian12_minimal)
               FINAL_NAME="armbian-installer-x86_64-homeassistant_debian12_minimal-z3745.iso"
               ;;
             *)
@@ -147,35 +120,11 @@ jobs:
               ;;
           esac
           mv output/*.iso "output/${FINAL_NAME}"
-          echo "FINAL_NAME=${FINAL_NAME}" >> $GITHUB_ENV
-
-      - name: Generate Release Notes
-        run: |
-          cat > info.md << 'EOF'
-      # Armbian Installer for Atom Z3745 (32-bit UEFI)
-
-      ## 适用硬件
-      - Intel Atom Z3735 / Z3745 / Z3736 系列
-      - 64位 CPU + 32位 UEFI 的平板/迷你主机（如台电、昂达、酷比魔方、联想 Miix 等）
-
-      ## 特性
-      - ✅ 已注入 **32位 UEFI** 引导文件（bootia32.efi + grubia32.efi）
-      - ✅ 支持直接从 U 盘启动，无需修改 BIOS
-      - ✅ 可选 Debian 12 / Ubuntu 24.04 / Home Assistant 环境
-
-      ## 安装方法
-      1. 使用 [Rufus](https://rufus.ie/) 或 [Etcher](https://www.balena.io/etcher/) 写入 U 盘
-      2. 从 U 盘启动（可能需要关闭 Secure Boot）
-      3. 运行 `ddd` 一键安装到 eMMC / SSD
-      EOF
-          echo "" >> info.md
-          echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> info.md
 
       - name: Publish Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
-          body_path: info.md
+          tag_name: Armbian-Z3745-${{ github.event.inputs.version_type }}
           files: output/*.iso
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
