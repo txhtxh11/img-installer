@@ -26,19 +26,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Image
+      - name: Build custom ISO
         run: |
-          chmod +x build.sh
-          ./build.sh
+          # 准备目录
+          mkdir -p output armbian
+          
+          # 根据类型选择下载链接
+          case "$VERSION_TYPE" in
+            "homeassistant_debian12_minimal")
+              IMG_URL="https://dl.armbian.com/uefi-x86/Trixie_current_server-homeassistant"
+              ;;
+            "debian12_minimal")
+              IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current_minimal"
+              ;;
+            "ubuntu24_minimal")
+              IMG_URL="https://dl.armbian.com/uefi-x86/Noble_current_minimal"
+              ;;
+            *)
+              IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current"
+              ;;
+          esac
+          
+          echo "Downloading from: $IMG_URL"
+          wget -O armbian/armbian.img.xz "$IMG_URL"
+          unxz -v armbian/armbian.img.xz
+          
+          # 如果你的 build.sh 需要执行其他步骤（如安装包、定制），运行它
+          # 假设 build.sh 会使用 armbian/armbian.img 并生成 ISO 到 output/
+          if [ -f build.sh ]; then
+            chmod +x build.sh
+            ./build.sh
+          else
+            # 如果没有 build.sh，你需要在这里添加 ISO 制作逻辑
+            echo "Error: build.sh not found. Please implement ISO generation."
+            exit 1
+          fi
 
       - name: Inject 32-bit EFI boot files
         run: |
           sudo apt update && sudo apt install -y xorriso wget
           ISO_FILE=$(ls output/*.iso | head -1)
           mkdir -p /tmp/efi_files
-          wget -q -O /tmp/efi_files/bootia32.efi https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
-          wget -q -O /tmp/efi_files/grubia32.efi https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
-          xorriso -as mkisofs -V "Armbian_Installer" -J -joliet-long -r -o "$ISO_FILE" -M "$ISO_FILE" -graft-points /EFI/BOOT/bootia32.efi=/tmp/efi_files/bootia32.efi /EFI/BOOT/grubia32.efi=/tmp/efi_files/grubia32.efi 2>/dev/null
+          wget -q -O /tmp/efi_files/bootia32.efi \
+            https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
+          wget -q -O /tmp/efi_files/grubia32.efi \
+            https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
+          xorriso -as mkisofs -V "Armbian_Installer" -J -joliet-long -r \
+            -o "$ISO_FILE" -M "$ISO_FILE" -graft-points \
+            /EFI/BOOT/bootia32.efi=/tmp/efi_files/bootia32.efi \
+            /EFI/BOOT/grubia32.efi=/tmp/efi_files/grubia32.efi 2>/dev/null
           echo "✅ 32-bit EFI injected"
 
       - name: Prepare Release Assets
