@@ -1,59 +1,52 @@
-name: "Build Armbian HA (32-bit UEFI for Z3745)"
+name: "Build Armbian Installer ISO"
 
 on:
   workflow_dispatch:
     inputs:
       version_type:
-        description: "Armbian 版本"
+        description: "版本类型"
         required: true
-        default: "homeassistant_debian12_minimal"
+        default: "standard"
         type: choice
         options:
-          - homeassistant_debian12_minimal
-          - debian12_minimal
+          - "standard"
+          - "debian12_minimal"
+          - "ubuntu24_minimal"
+          - "homeassistant_debian12_minimal"
 
 jobs:
-  build:
+  build-release:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      VERSION_TYPE: ${{ github.event.inputs.version_type }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Armbian Image
+      - name: Build Image
+        run: ./build.sh
+
+      - name: "Prepare Release Assets"
         run: |
-          chmod +x build.sh
-          ./build.sh
+          # 根据版本类型重命名ISO文件
+          if [ "$VERSION_TYPE" = "debian12_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-debian12_minimal.iso
+          fi
 
-      - name: Inject 32-bit UEFI Boot Files
-        run: |
-          sudo apt update && sudo apt install -y mtools
-          ISO=$(ls output/*.iso | head -1)
-          mkdir -p /tmp/efi/boot
+          if [ "$VERSION_TYPE" = "ubuntu24_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-ubuntu24_minimal.iso
+          fi
 
-          # 下载 32位 EFI 文件（双源兜底）
-          wget -q -O /tmp/efi/boot/bootia32.efi https://github.com/tianocore/tianocore.github.io/raw/master/grub/bootia32.efi || \
-          wget -q -O /tmp/efi/boot/bootia32.efi https://github.com/ipxe/ipxe/raw/master/bin-i386-efi/ipxe.efi || exit 1
+          if [ "$VERSION_TYPE" = "homeassistant_debian12_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-homeassistant_debian12_minimal.iso
+          fi
+          
 
-          wget -q -O /tmp/efi/boot/grubia32.efi https://github.com/tianocore/tianocore.github.io/raw/master/grub/grubia32.efi || true
-
-          # 注入文件
-          mmd -i "$ISO@@1M" ::EFI/BOOT 2>/dev/null || true
-          mcopy -i "$ISO@@1M" -o /tmp/efi/boot/* ::EFI/BOOT/
-
-          echo "✅ 32位 EFI 注入完成"
-
-      - name: Rename ISO
-        run: |
-          mv output/*.iso "output/armbian-${{ github.event.inputs.version_type }}-z3745.iso"
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@v3
+      - name: "Publish"
+        uses: softprops/action-gh-release@v2.2.1
         with:
-          tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
-          files: output/*.iso
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: "Armbian-Installer-x86_64-ISO"
+          body_path: ${{ github.workspace }}/info.md
+          files: |
+            output/armbian-installer-x86_64-${{ github.event.inputs.version_type }}.iso
+          token: ${{ secrets.GITHUB_TOKEN }}
