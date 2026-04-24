@@ -21,7 +21,7 @@ jobs:
       contents: write
     env:
       VERSION_TYPE: ${{ github.event.inputs.version_type }}
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 消除Node警告
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v4
@@ -29,50 +29,35 @@ jobs:
       - name: Build Image
         run: ./build.sh
 
-      # ==============================================
-      # 为 Atom Z3745 添加 32位 UEFI 引导文件
-      # 64位CPU + 32位UEFI 必须添加这两个文件
-      # ==============================================
-      - name: "Inject 32-bit EFI boot files for Atom Z3745"
+      - name: Inject 32-bit EFI boot files for Atom Z3745
         run: |
-          # 安装 mtools 用于操作 ISO
           sudo apt update && sudo apt install -y mtools
-          
-          # 查找生成的 ISO 文件
           ISO_FILE=$(ls output/*.iso | head -1)
           echo "处理 ISO: $ISO_FILE"
-          
-          # 创建临时目录
           mkdir -p /tmp/efi/boot
           
-          # 下载 32位 UEFI 引导文件
-          echo "📥 下载 bootia32.efi..."
+          echo "下载 bootia32.efi..."
           wget -q -O /tmp/efi/boot/bootia32.efi \
             https://github.com/tianocore/tianocore.github.io/raw/master/grub/bootia32.efi || \
           wget -q -O /tmp/efi/boot/bootia32.efi \
             https://github.com/ipxe/ipxe/raw/master/bin-i386-efi/ipxe.efi || \
-          { echo "❌ bootia32.efi 下载失败"; exit 1; }
+          { echo "bootia32.efi 下载失败"; exit 1; }
           
-          echo "📥 下载 grubia32.efi..."
+          echo "下载 grubia32.efi..."
           wget -q -O /tmp/efi/boot/grubia32.efi \
             https://github.com/tianocore/tianocore.github.io/raw/master/grub/grubia32.efi || \
-          echo "⚠️ grubia32.efi 下载失败，可能不影响启动"
+          echo "grubia32.efi 下载失败，继续..."
           
-          # 注入到 ISO 的 EFI 分区
-          echo "🔧 注入 32位 EFI 文件到 ISO..."
-          # 创建 EFI/BOOT 目录（如果不存在）
+          echo "注入 32位 EFI 文件..."
           mmd -i "$ISO_FILE@@1M" ::EFI/BOOT 2>/dev/null || true
-          # 复制文件
           mcopy -i "$ISO_FILE@@1M" -o /tmp/efi/boot/* ::EFI/BOOT/
           
-          # 验证注入结果
-          echo "✅ 验证注入结果："
+          echo "验证注入结果："
           mdir -i "$ISO_FILE@@1M" ::EFI/BOOT/
-          echo "✅ 32位 EFI 文件注入完成！"
+          echo "32位 EFI 注入完成！"
 
-      - name: "Prepare Release Assets"
+      - name: Prepare Release Assets
         run: |
-          # 获取版本类型对应的文件名
           case "$VERSION_TYPE" in
             "debian12_minimal")
               FINAL_NAME="armbian-installer-x86_64-debian12_minimal-z3745.iso"
@@ -83,52 +68,35 @@ jobs:
             "homeassistant_debian12_minimal")
               FINAL_NAME="armbian-installer-x86_64-homeassistant_debian12_minimal-z3745.iso"
               ;;
-            "standard")
+            *)
               FINAL_NAME="armbian-installer-x86_64-standard-z3745.iso"
               ;;
-            *)
-              FINAL_NAME="armbian-installer-x86_64-${VERSION_TYPE}-z3745.iso"
-              ;;
           esac
-          
-          # 重命名 ISO 文件
           mv output/*.iso "output/${FINAL_NAME}"
-          echo "✅ ISO 已重命名为: ${FINAL_NAME}"
+          echo "FINAL_NAME=${FINAL_NAME}" >> $GITHUB_ENV
 
-      - name: "Generate Release Notes"
+      - name: Generate Release Notes
         run: |
-          cat > info.md << 'EOF'
-# Armbian Installer ISO for Atom Z3745 (32-bit UEFI)
+          echo '# Armbian Installer for Atom Z3745 (32-bit UEFI)' > info.md
+          echo '' >> info.md
+          echo '## 适用硬件' >> info.md
+          echo '- Intel Atom Z3735 / Z3745 / Z3736 系列' >> info.md
+          echo '- 64位 CPU + 32位 UEFI 的平板/迷你主机' >> info.md
+          echo '' >> info.md
+          echo '## 特性' >> info.md
+          echo '- ✅ 32位 UEFI 引导支持 (bootia32.efi)' >> info.md
+          echo '- ✅ 专为 Atom Z3745 优化' >> info.md
+          echo '- ✅ 可选 Debian 12 / Ubuntu 24 / Home Assistant' >> info.md
+          echo '' >> info.md
+          echo '## 安装方法' >> info.md
+          echo '1. 使用 Rufus 或 Etcher 写入 U 盘' >> info.md
+          echo '2. 从 U 盘启动' >> info.md
+          echo '3. 运行 `ddd` 安装到 eMMC' >> info.md
+          echo '' >> info.md
+          echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> info.md
+          echo "版本类型: $VERSION_TYPE" >> info.md
 
-## 🖥️ 适用硬件
-- **Intel Atom Z3735 / Z3745 / Z3736 系列**
-- 64位 CPU + 32位 UEFI 的平板/迷你主机
-- 包括：台电、昂达、酷比魔方、联想 Miix、华硕 T100 等
-
-## ✨ 特性
-- ✅ **32位 UEFI 引导支持** (bootia32.efi + grubia32.efi)
-- ✅ 专为 Atom Z3745 优化
-- ✅ 可选 Debian 12 / Ubuntu 24 / Home Assistant
-
-## 📥 安装方法
-1. 使用 **Rufus** (推荐) 或 **Etcher** 写入 U 盘
-2. 从 U 盘启动（可能需要关闭 Secure Boot）
-3. 运行 `ddd` 一键安装到 eMMC
-
-## 🔧 技术说明
-此 ISO 已添加 32位 UEFI 引导文件，解决了 Atom Z3745 系列设备无法从 64位 UEFI 启动的问题。
-
-## 📦 版本类型说明
-- **standard**: 标准 Armbian 系统
-- **debian12_minimal**: 精简 Debian 12
-- **ubuntu24_minimal**: 精简 Ubuntu 24.04
-- **homeassistant_debian12_minimal**: 预装 Home Assistant 的 Debian 12
-
----
-构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-EOF
-
-      - name: "Publish Release"
+      - name: Publish Release
         uses: softprops/action-gh-release@v4
         with:
           tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
