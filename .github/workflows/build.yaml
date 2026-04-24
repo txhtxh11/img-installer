@@ -50,29 +50,21 @@ jobs:
           wget -O armbian/armbian.img.xz "$IMG_URL"
           unxz -v armbian/armbian.img.xz
 
-          # === 修复：使用 kpartx 正确映射磁盘镜像 ===
-          sudo kpartx -av armbian/armbian.img
-          # 这条命令的输出会显示映射的设备，通常是 '/dev/mapper/loopXpY'
-          # 我们使用一个更简单的方法：losetup -P 来自动探测分区
+          # 使用 losetup 自动探测分区
           sudo losetup -P /dev/loop0 armbian/armbian.img
-          # 假设根分区是第一个分区 (/dev/loop0p1)
           sudo mkdir -p /mnt/armbian
           sudo mount /dev/loop0p1 /mnt/armbian
 
-          # 复制内核和 initrd
           KERNEL=$(ls /mnt/armbian/boot/vmlinuz-* | head -1)
           INITRD=$(ls /mnt/armbian/boot/initrd.img-* | head -1)
           sudo cp "$KERNEL" work/staging/live/vmlinuz
           sudo cp "$INITRD" work/staging/live/initrd
 
-          # 创建 squashfs
           sudo mksquashfs /mnt/armbian work/staging/live/filesystem.squashfs -comp gzip -b 1M
 
-          # 清理
           sudo umount /mnt/armbian
           sudo losetup -d /dev/loop0
 
-          # 准备 ISO 引导
           sudo cp /usr/lib/ISOLINUX/isolinux.bin work/staging/isolinux/
           sudo cp /usr/lib/syslinux/modules/bios/*.c32 work/staging/isolinux/ 2>/dev/null || true
 
@@ -83,7 +75,6 @@ jobs:
             APPEND initrd=/live/initrd boot=live quiet splash
           EOF
 
-          # 生成 ISO
           sudo xorriso -as mkisofs -V "Armbian_Live" -J -joliet-long -r \
             -o output/armbian-installer-x86_64-${VERSION_TYPE}.iso \
             -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
@@ -92,9 +83,6 @@ jobs:
           sudo chmod 666 output/*.iso
           ls -lh output/
 
-      # ==============================================
-      # 从你的仓库下载 32位 EFI 文件并注入
-      # ==============================================
       - name: Inject 32-bit EFI boot files from personal repo
         run: |
           ISO_FILE=$(ls output/*.iso | head -1)
@@ -136,11 +124,12 @@ jobs:
           esac
           mv output/*.iso "output/${FINAL_NAME}"
 
-      # === 修复：升级 action-gh-release 到 v4 以消除 Node 警告 ===
-      - name: Publish Release
-        uses: softprops/action-gh-release@v4
+      - name: Create Release
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: Armbian-Z3745-${{ github.event.inputs.version_type }}
-          files: output/*.iso
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: Armbian-Z3745-${{ github.event.inputs.version_type }}
+          name: Armbian Z3745 ${{ github.event.inputs.version_type }}
+          artifacts: "output/*.iso"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          replacesArtifacts: true
