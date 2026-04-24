@@ -21,7 +21,6 @@ jobs:
       contents: write
     env:
       VERSION_TYPE: ${{ github.event.inputs.version_type }}
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 消除Node警告
 
     steps:
       - uses: actions/checkout@v4
@@ -29,37 +28,22 @@ jobs:
       - name: Build Image
         run: ./build.sh
 
-      # ==============================================
-      # 为 Atom Z3745 添加 32位 UEFI 引导文件
-      # ==============================================
       - name: Inject 32-bit EFI boot files for Atom Z3745
         run: |
-          sudo apt update && sudo apt install -y mtools
+          sudo apt update && sudo apt install -y mtools grub-efi-ia32-bin
           ISO_FILE=$(ls output/*.iso | head -1)
           echo "处理 ISO: $ISO_FILE"
           mkdir -p /tmp/efi/boot
           
-          # 下载 32位 UEFI 引导文件
-          echo "下载 bootia32.efi..."
-          wget -q -O /tmp/efi/boot/bootia32.efi \
-            https://github.com/tianocore/tianocore.github.io/raw/master/grub/bootia32.efi || \
-          wget -q -O /tmp/efi/boot/bootia32.efi \
-            https://github.com/ipxe/ipxe/raw/master/bin-i386-efi/ipxe.efi || \
-          { echo "bootia32.efi 下载失败"; exit 1; }
-          
-          echo "下载 grubia32.efi..."
-          wget -q -O /tmp/efi/boot/grubia32.efi \
-            https://github.com/tianocore/tianocore.github.io/raw/master/grub/grubia32.efi || \
-          echo "grubia32.efi 下载失败，继续..."
+          # 从系统 GRUB 包复制 32位 EFI 文件
+          cp /usr/lib/grub/ia32-efi/monolithic/bootia32.efi /tmp/efi/boot/bootia32.efi
+          cp /usr/lib/grub/ia32-efi/monolithic/grubia32.efi /tmp/efi/boot/grubia32.efi
           
           # 注入到 ISO
-          echo "注入 32位 EFI 文件..."
           mmd -i "$ISO_FILE@@1M" ::EFI/BOOT 2>/dev/null || true
           mcopy -i "$ISO_FILE@@1M" -o /tmp/efi/boot/* ::EFI/BOOT/
           
-          echo "验证注入结果："
-          mdir -i "$ISO_FILE@@1M" ::EFI/BOOT/
-          echo "32位 EFI 注入完成！"
+          echo "✅ 32位 EFI 注入完成！"
 
       - name: Prepare Release Assets
         run: |
@@ -78,37 +62,11 @@ jobs:
               ;;
           esac
           mv output/*.iso "output/${FINAL_NAME}"
-          echo "FINAL_NAME=${FINAL_NAME}" >> $GITHUB_ENV
 
-      - name: Generate Release Notes
-        run: |
-          echo '# Armbian Installer for Atom Z3745 (32-bit UEFI)' > info.md
-          echo '' >> info.md
-          echo '## 适用硬件' >> info.md
-          echo '- Intel Atom Z3735 / Z3745 / Z3736 系列' >> info.md
-          echo '- 64位 CPU + 32位 UEFI 的平板/迷你主机' >> info.md
-          echo '' >> info.md
-          echo '## 特性' >> info.md
-          echo '- ✅ 32位 UEFI 引导支持 (bootia32.efi)' >> info.md
-          echo '- ✅ 专为 Atom Z3745 优化' >> info.md
-          echo '- ✅ 可选 Debian 12 / Ubuntu 24 / Home Assistant' >> info.md
-          echo '' >> info.md
-          echo '## 安装方法' >> info.md
-          echo '1. 使用 Rufus 或 Etcher 写入 U 盘' >> info.md
-          echo '2. 从 U 盘启动' >> info.md
-          echo '3. 运行 `ddd` 安装到 eMMC' >> info.md
-          echo '' >> info.md
-          echo "构建时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> info.md
-          echo "版本类型: $VERSION_TYPE" >> info.md
-
-      # ==============================================
-      # 👇 关键修改：将 v4 改成 v3
-      # ==============================================
       - name: Publish Release
-        uses: softprops/action-gh-release@v3  # 改成 v3
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "Armbian-Z3745-${{ github.event.inputs.version_type }}"
-          body_path: info.md
           files: output/*.iso
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
