@@ -1,150 +1,72 @@
-name: Build Armbian Installer ISO (32-bit UEFI for Atom Z3745)
+name: "Build Armbian Installer ISO"
 
 on:
   workflow_dispatch:
     inputs:
       version_type:
-        description: 版本类型
+        description: "版本类型"
         required: true
-        default: standard
+        default: "standard"
         type: choice
         options:
-          - standard
-          - debian12_minimal
-          - ubuntu24_minimal
-          - homeassistant_debian12_minimal
+          - "standard"
+          - "debian12_minimal"
+          - "ubuntu24_minimal"
+          - "homeassistant_debian12_minimal"
 
 jobs:
   build-release:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     env:
       VERSION_TYPE: ${{ github.event.inputs.version_type }}
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Armbian Live ISO
+      # --- 新增步骤：获取 32位 EFI 引导文件 ---
+      - name: Fetch 32-bit EFI files
         run: |
-          set -e
-          sudo apt update
-          sudo apt install -y wget xz-utils squashfs-tools xorriso isolinux syslinux-common kpartx
+          mkdir -p efi_tmp
+          # 使用 sparse-checkout 仅下载需要的文件，节省带宽
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/txhtxh11/my-efi-files.git efi_tmp
+          cd efi_tmp
+          git sparse-checkout set EFI/BOOT
+          cd ..
+          
+          # 假设你的构建脚本需要这些文件放在 output/EFI/BOOT 或 根目录下的 EFI/BOOT
+          # 请根据你的 build.sh 实际逻辑修改目标路径
+          # 这里演示创建一个通用的 efi_assets 目录供脚本调用，或者直接放入源码对应位置
+          mkdir -p boot_files
+          cp efi_tmp/EFI/BOOT/bootia32.efi boot_files/
+          cp efi_tmp/EFI/BOOT/grubia32.efi boot_files/
+          
+          # 如果 build.sh 默认扫描当前目录的 EFI/BOOT，请取消下面这行的注释：
+          # mkdir -p EFI/BOOT && cp boot_files/* EFI/BOOT/
+      # ---------------------------------------
 
-          # 选择下载链接
-          case "$VERSION_TYPE" in
-            homeassistant_debian12_minimal)
-              IMG_URL="https://dl.armbian.com/uefi-x86/Trixie_current_server-homeassistant"
-              ;;
-            debian12_minimal)
-              IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current_minimal"
-              ;;
-            ubuntu24_minimal)
-              IMG_URL="https://dl.armbian.com/uefi-x86/Noble_current_minimal"
-              ;;
-            *)
-              IMG_URL="https://dl.armbian.com/uefi-x86/Bookworm_current"
-              ;;
-          esac
+      - name: Build Image
+        run: ./build.sh
 
-          mkdir -p output work/staging/live work/staging/isolinux
-          wget -O armbian.img.xz "$IMG_URL"
-          unxz armbian.img.xz
-
-          # 挂载 Armbian 镜像
-          sudo losetup -P /dev/loop0 armbian.img
-          sudo mkdir -p /mnt/armbian
-          sudo mount /dev/loop0p1 /mnt/armbian
-
-          # 复制内核和 initrd
-          KERNEL=$(ls /mnt/armbian/boot/vmlinuz-* | head -1)
-          INITRD=$(ls /mnt/armbian/boot/initrd.img-* | head -1)
-          sudo cp "$KERNEL" work/staging/live/vmlinuz
-          sudo cp "$INITRD" work/staging/live/initrd
-
-          # 压缩根文件系统
-          sudo mksquashfs /mnt/armbian work/staging/live/filesystem.squashfs -comp gzip -b 1M
-
-          sudo umount /mnt/armbian
-          sudo losetup -d /dev/loop0
-
-          # 引导文件
-          sudo cp /usr/lib/ISOLINUX/isolinux.bin work/staging/isolinux/
-          sudo cp /usr/lib/syslinux/modules/bios/*.c32 work/staging/isolinux/ 2>/dev/null || true
-
-          echo "DEFAULT live" > work/staging/isolinux/isolinux.cfg
-          echo "LABEL live" >> work/staging/isolinux/isolinux.cfg
-          echo "  KERNEL /live/vmlinuz" >> work/staging/isolinux/isolinux.cfg
-          echo "  APPEND initrd=/live/initrd boot=live quiet splash" >> work/staging/isolinux/isolinux.cfg
-
-          # 生成 ISO
-          sudo xorriso -as mkisofs -V "Armbian_Live" -J -joliet-long -r \
-            -o output/armbian-installer-x86_64-${VERSION_TYPE}.iso \
-            -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
-            -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot work/staging
-
-          sudo chmod 666 output/*.iso
-          ls -lh output/
-
-      - name: Inject 32-bit EFI boot files from your repository
+      - name: "Prepare Release Assets"
         run: |
-          ISO_FILE=$(ls output/*.iso | head -1)
-          echo "ISO file: $ISO_FILE"
-
-          mkdir -p /tmp/efi
-
-          # 从你的 GitHub 仓库下载 32位 EFI 文件
-          echo "Downloading bootia32.efi from txhtxh11/my-efi-files..."
-          wget -q -O /tmp/efi/bootia32.efi \
-            https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/bootia32.efi
-
-          echo "Downloading grubia32.efi from txhtxh11/my-efi-files..."
-          wget -q -O /tmp/efi/grubia32.efi \
-            https://raw.githubusercontent.com/txhtxh11/my-efi-files/main/EFI/BOOT/grubia32.efi
-
-          # 检查文件是否下载成功且非空
-          if [ ! -s /tmp/efi/bootia32.efi ]; then
-            echo "ERROR: bootia32.efi is empty or missing"
-            exit 1
-          fi
-          if [ ! -s /tmp/efi/grubia32.efi ]; then
-            echo "WARNING: grubia32.efi is empty or missing, continuing anyway"
+          # 根据版本类型重命名ISO文件
+          if [ "$VERSION_TYPE" = "debian12_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-debian12_minimal.iso
           fi
 
-          # 注入到 ISO
-          echo "Injecting EFI files into ISO..."
-          xorriso -dev "$ISO_FILE" \
-            -add /tmp/efi/bootia32.efi -- /EFI/BOOT/bootia32.efi \
-            -add /tmp/efi/grubia32.efi -- /EFI/BOOT/grubia32.efi \
-            -commit -eject all
+          if [ "$VERSION_TYPE" = "ubuntu24_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-ubuntu24_minimal.iso
+          fi
 
-          echo "✅ 32-bit EFI injection completed."
+          if [ "$VERSION_TYPE" = "homeassistant_debian12_minimal" ]; then
+            mv output/armbian-installer-x86_64-standard.iso output/armbian-installer-x86_64-homeassistant_debian12_minimal.iso
+          fi
 
-      - name: Rename ISO for Release
-        run: |
-          case "$VERSION_TYPE" in
-            debian12_minimal)
-              FINAL_NAME="armbian-installer-x86_64-debian12_minimal-z3745.iso"
-              ;;
-            ubuntu24_minimal)
-              FINAL_NAME="armbian-installer-x86_64-ubuntu24_minimal-z3745.iso"
-              ;;
-            homeassistant_debian12_minimal)
-              FINAL_NAME="armbian-installer-x86_64-homeassistant_debian12_minimal-z3745.iso"
-              ;;
-            *)
-              FINAL_NAME="armbian-installer-x86_64-standard-z3745.iso"
-              ;;
-          esac
-          mv output/*.iso "output/${FINAL_NAME}"
-
-      - name: Create Release
-        uses: ncipollo/release-action@v1
+      - name: "Publish"
+        uses: softprops/action-gh-release@v2.2.1
         with:
-          tag: Armbian-Z3745-${{ github.event.inputs.version_type }}
-          name: Armbian Z3745 ${{ github.event.inputs.version_type }}
-          artifacts: output/*.iso
+          tag_name: "Armbian-Installer-x86_64-ISO"
+          body_path: ${{ github.workspace }}/info.md
+          files: |
+            output/armbian-installer-x86_64-${{ github.event.inputs.version_type }}.iso
           token: ${{ secrets.GITHUB_TOKEN }}
-          allowUpdates: true
-          replacesArtifacts: true
